@@ -1,0 +1,8 @@
+{
+  "name": "Nero Security Mobile",
+  "description": "Android optimized threat intelligence and artifact analyzer.",
+  "requestFramePermissions": [
+    "camera",
+    "microphone"
+  ]
+}
