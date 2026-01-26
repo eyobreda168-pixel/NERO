@@ -4,14 +4,193 @@ import {
   Link2, Upload, Ghost, Flame, Search, ShieldAlert, Loader2, 
   ShieldCheck, FileCheck, XCircle, Terminal, Layers, Square, 
   Menu, X, Sun, Moon, Info, BookOpen, RefreshCw, Smartphone, 
-  Camera, FolderOpen, ChevronRight, Play
+  Camera, FolderOpen, ChevronRight, Play, Scan, Aperture, Focus, Image as ImageIcon
 } from 'lucide-react';
+import jsQR from 'jsqr';
 import { NeroIcon } from './components/NeroIcon';
 import AboutPage from './components/AboutPage';
 import AnalysisDisplay from './components/AnalysisDisplay';
 import SplashScreen from './components/SplashScreen';
 import { analyzeLink, analyzeFile } from './services/geminiService';
 import { ScanState } from './types';
+
+// Camera Component
+const CameraModal = ({ onClose, onCapture, onQrFound }: { onClose: () => void, onCapture: (file: File) => void, onQrFound: (url: string) => void }) => {
+  const videoRef = useRef<HTMLVideoElement>(null);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [scanning, setScanning] = useState(true);
+
+  useEffect(() => {
+    let stream: MediaStream | null = null;
+    let animationFrameId: number;
+
+    const startCamera = async () => {
+      try {
+        stream = await navigator.mediaDevices.getUserMedia({ 
+          video: { facingMode: 'environment' } 
+        });
+        if (videoRef.current) {
+          videoRef.current.srcObject = stream;
+          videoRef.current.setAttribute("playsinline", "true");
+          videoRef.current.play();
+          requestAnimationFrame(tick);
+        }
+      } catch (err) {
+        setError("Camera access denied or unavailable.");
+      }
+    };
+
+    const tick = () => {
+      if (videoRef.current && canvasRef.current && videoRef.current.readyState === videoRef.current.HAVE_ENOUGH_DATA) {
+        const video = videoRef.current;
+        const canvas = canvasRef.current;
+        const ctx = canvas.getContext('2d');
+        
+        if (ctx) {
+          canvas.height = video.videoHeight;
+          canvas.width = video.videoWidth;
+          ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+          
+          if (scanning) {
+            const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+            const code = jsQR(imageData.data, imageData.width, imageData.height, {
+              inversionAttempts: "dontInvert",
+            });
+
+            if (code && code.data && (code.data.startsWith('http') || code.data.startsWith('www'))) {
+              setScanning(false);
+              onQrFound(code.data);
+            }
+          }
+        }
+      }
+      animationFrameId = requestAnimationFrame(tick);
+    };
+
+    startCamera();
+
+    return () => {
+      if (stream) stream.getTracks().forEach(track => track.stop());
+      cancelAnimationFrame(animationFrameId);
+    };
+  }, [scanning, onQrFound]);
+
+  const takePhoto = () => {
+    if (canvasRef.current) {
+      canvasRef.current.toBlob((blob) => {
+        if (blob) {
+          const file = new File([blob], `cam_capture_${Date.now()}.jpg`, { type: "image/jpeg" });
+          onCapture(file);
+        }
+      }, 'image/jpeg');
+    }
+  };
+
+  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    // Check for QR code in uploaded file first
+    const reader = new FileReader();
+    reader.onload = (event) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        const ctx = canvas.getContext('2d');
+        if (ctx) {
+          canvas.width = img.width;
+          canvas.height = img.height;
+          ctx.drawImage(img, 0, 0);
+          const imageData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+          const code = jsQR(imageData.data, imageData.width, imageData.height, {
+            inversionAttempts: "dontInvert",
+          });
+
+          if (code && code.data && (code.data.startsWith('http') || code.data.startsWith('www'))) {
+            setScanning(false);
+            onQrFound(code.data);
+          } else {
+            // No QR found, proceed with file analysis
+            onCapture(file);
+          }
+        }
+      };
+      img.src = event.target?.result as string;
+    };
+    reader.readAsDataURL(file);
+  };
+
+  return (
+    <div className="fixed inset-0 z-[250] bg-black flex flex-col animate-in fade-in duration-300">
+      <div className="absolute inset-0 pointer-events-none z-20">
+        <div className="absolute top-0 left-0 w-full h-32 bg-gradient-to-b from-black to-transparent opacity-80" />
+        <div className="absolute bottom-0 left-0 w-full h-32 bg-gradient-to-t from-black to-transparent opacity-80" />
+        
+        {/* HUD Overlay */}
+        <div className="absolute inset-8 border-2 border-white/20 rounded-[2rem] flex flex-col justify-between p-4">
+          <div className="flex justify-between items-start">
+             <div className="w-8 h-8 border-t-2 border-l-2 border-red-500" />
+             <div className="w-8 h-8 border-t-2 border-r-2 border-red-500" />
+          </div>
+          <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-64 h-64 border border-white/10 rounded-2xl flex items-center justify-center">
+             <div className="w-60 h-60 border border-white/20 rounded-xl relative">
+                <div className="absolute top-0 left-0 w-4 h-4 border-t-2 border-l-2 border-cyan-500" />
+                <div className="absolute top-0 right-0 w-4 h-4 border-t-2 border-r-2 border-cyan-500" />
+                <div className="absolute bottom-0 left-0 w-4 h-4 border-b-2 border-l-2 border-cyan-500" />
+                <div className="absolute bottom-0 right-0 w-4 h-4 border-b-2 border-r-2 border-cyan-500" />
+                <div className="w-full h-0.5 bg-red-500/50 absolute top-1/2 -translate-y-1/2 animate-[pulse_2s_infinite]" />
+             </div>
+          </div>
+          <div className="flex justify-between items-end">
+             <div className="w-8 h-8 border-b-2 border-l-2 border-red-500" />
+             <div className="w-8 h-8 border-b-2 border-r-2 border-red-500" />
+          </div>
+        </div>
+      </div>
+
+      {error ? (
+        <div className="flex-1 flex items-center justify-center text-red-500 font-mono p-8 text-center">{error}</div>
+      ) : (
+        <div className="flex-1 relative bg-black overflow-hidden flex items-center justify-center">
+           <video ref={videoRef} className="absolute inset-0 w-full h-full object-cover" muted />
+           <canvas ref={canvasRef} className="hidden" />
+        </div>
+      )}
+
+      {/* Controls */}
+      <div className="h-32 bg-black z-30 flex items-center justify-between px-8 pb-8">
+        <button onClick={onClose} className="p-4 bg-zinc-900 rounded-full text-white hover:bg-zinc-800 transition-colors">
+          <XCircle className="w-6 h-6" />
+        </button>
+        
+        {/* Capture Button */}
+        <button onClick={takePhoto} className="w-20 h-20 rounded-full border-4 border-white flex items-center justify-center active:scale-95 transition-transform group">
+          <div className="w-16 h-16 bg-white rounded-full group-hover:scale-90 transition-transform group-active:scale-75" />
+        </button>
+
+        {/* Gallery / File Import */}
+        <div className="relative">
+          <input 
+            type="file" 
+            ref={fileInputRef} 
+            className="hidden" 
+            accept="image/*" 
+            onChange={handleFileUpload} 
+          />
+          <button 
+            onClick={() => fileInputRef.current?.click()}
+            className="p-4 bg-zinc-900 rounded-full text-cyan-500 hover:bg-zinc-800 hover:text-white transition-colors border border-cyan-500/20"
+          >
+            <ImageIcon className="w-6 h-6" />
+          </button>
+          <span className="absolute -bottom-6 left-1/2 -translate-x-1/2 text-[9px] font-black uppercase text-cyan-500 tracking-wider whitespace-nowrap">Import</span>
+        </div>
+      </div>
+    </div>
+  );
+};
 
 // New Sub-components for Android feel
 const PermissionsScreen = ({ onNext }: { onNext: () => void }) => (
@@ -120,6 +299,7 @@ const App: React.FC = () => {
   const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [url, setUrl] = useState('');
   const [isDarkMode, setIsDarkMode] = useState(true);
+  const [isCameraOpen, setIsCameraOpen] = useState(false);
 
   const [scanState, setScanState] = useState<ScanState>({
     isScanning: false,
@@ -134,8 +314,8 @@ const App: React.FC = () => {
     else document.documentElement.classList.remove('dark');
   }, [isDarkMode]);
 
-  const handleLinkScan = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const handleLinkScan = async (e?: React.FormEvent) => {
+    if(e) e.preventDefault();
     if (!url) return;
     isCancelledRef.current = false;
     setScanState({ isScanning: true, result: null, error: null });
@@ -175,6 +355,29 @@ const App: React.FC = () => {
   return (
     <div className="fixed inset-0 bg-[#f9f9f9] dark:bg-[#121212] flex flex-col transition-colors duration-300">
       
+      {/* Camera Interface */}
+      {isCameraOpen && (
+        <CameraModal 
+          onClose={() => setIsCameraOpen(false)}
+          onCapture={(file) => {
+            setIsCameraOpen(false);
+            processFile(file);
+          }}
+          onQrFound={(code) => {
+            setIsCameraOpen(false);
+            setUrl(code);
+            // Trigger scan after a short delay to allow UI to update
+            setTimeout(() => {
+              const fakeEvent = { preventDefault: () => {} } as React.FormEvent;
+              // We need to call logic that uses the NEW url, so we just set state here and let the user click search or use a refined effect, 
+              // but for now let's just populate it. 
+              // Actually, better UX:
+              setUrl(code);
+            }, 100);
+          }}
+        />
+      )}
+
       {/* Sidemenu Drawer */}
       <div className={`fixed inset-0 z-[200] transition-opacity duration-300 ${isSidebarOpen ? 'bg-black/40 opacity-100 pointer-events-auto' : 'opacity-0 pointer-events-none'}`} onClick={() => setIsSidebarOpen(false)} />
       <aside className={`fixed top-0 left-0 h-full w-4/5 max-w-sm bg-white dark:bg-[#1e1e1e] z-[210] shadow-2xl transition-transform duration-500 ease-out transform ${isSidebarOpen ? 'translate-x-0' : '-translate-x-full'}`}>
@@ -263,6 +466,16 @@ const App: React.FC = () => {
                       value={url}
                       onChange={(e) => setUrl(e.target.value)}
                     />
+                    
+                    {/* Camera Trigger */}
+                    <button 
+                      type="button" 
+                      onClick={() => setIsCameraOpen(true)}
+                      className="p-4 bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 rounded-2xl active:scale-90 transition-transform"
+                    >
+                      <Aperture className="w-4 h-4" />
+                    </button>
+
                     <button type="submit" className="p-4 bg-zinc-900 dark:bg-white text-white dark:text-black rounded-2xl font-black uppercase tracking-widest text-[10px] active:scale-90 transition-transform"><Search className="w-4 h-4" /></button>
                   </div>
                 </form>
